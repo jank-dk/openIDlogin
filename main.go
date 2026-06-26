@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
@@ -82,7 +85,17 @@ func getCodeAndState(l net.Listener) (string, string, error) {
 	return code, state, srv.Shutdown(ctx)
 }
 
-func identityProviderLogin(listenPort int, authorizationUrl, tokenUrl *url.URL, scope, clientID, clientSecret string, httpClient *http.Client) error {
+func GenerateCodeVerifierAndChallenge() (string, string, error) {
+	codeVerifierBytes := make([]byte, 32)
+	if _, err := rand.Read(codeVerifierBytes); err != nil {
+		return "", "", fmt.Errorf("error generating code verifier: %w", err)
+	}
+	codeVerifier := base64.RawURLEncoding.EncodeToString(codeVerifierBytes)
+	codeChallenge := sha256.Sum256([]byte(codeVerifier))
+	return codeVerifier, base64.RawURLEncoding.EncodeToString(codeChallenge[:]), nil
+}
+
+func identityProviderLogin(listenPort int, authorizationUrl, tokenUrl *url.URL, scope, clientID, clientSecret string, usePkce bool, httpClient *http.Client) error {
 	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", listenPort))
 	if err != nil {
 		return err
@@ -90,19 +103,20 @@ func identityProviderLogin(listenPort int, authorizationUrl, tokenUrl *url.URL, 
 	defer l.Close()
 	redirectUri := fmt.Sprintf("http://localhost:%d", listenPort)
 
-	// codeVerifier := make([]byte, 32)
-	// if _, err = rand.Read(codeVerifier); err != nil {
-	// 	return fmt.Errorf("error generating code verifier: %w", err)
-	// }
-	// codeChallenge := sha256.Sum256(codeVerifier)
+	codeVerifier, codeChallenge, err := GenerateCodeVerifierAndChallenge()
+	if err != nil {
+		return err
+	}
 
 	values := url.Values{}
 	values.Add("client_id", clientID)
 	values.Add("response_type", "code")
 	values.Add("scope", scope)
 	values.Add("redirect_uri", redirectUri)
-	// values.Add("code_challenge", base64.URLEncoding.EncodeToString(codeChallenge[:]))
-	// values.Add("code_challenge_method", "S256")
+	if usePkce {
+		values.Add("code_challenge", codeChallenge)
+		values.Add("code_challenge_method", "S256")
+	}
 	authorizationUrl.RawQuery = values.Encode()
 
 	if err = openbrowser(authorizationUrl.String()); err != nil {
@@ -118,7 +132,9 @@ func identityProviderLogin(listenPort int, authorizationUrl, tokenUrl *url.URL, 
 	values.Add("client_id", clientID)
 	values.Add("grant_type", "authorization_code")
 	values.Add("redirect_uri", redirectUri)
-	// values.Add("code_verifier", base64.URLEncoding.EncodeToString(codeVerifier))
+	if usePkce {
+		values.Add("code_verifier", codeVerifier)
+	}
 	values.Add("code", code)
 
 	req, err := http.NewRequest("POST", tokenUrl.String(), strings.NewReader(values.Encode()))
@@ -156,6 +172,7 @@ func main() {
 	scopeFlag := flag.String("scope", "openid profile email", "The scopes requested")
 	listenPortFlag := flag.Int("listenport", 12345, "The port to listen for the code")
 	disableCertCheck := flag.Bool("disablecertcheck", false, "Disable TLS certificate checks")
+	disablepkceFlag := flag.Bool("disablepkce", false, "Disable PKCE (Proof Key for Code Exchange)")
 
 	tr := http.DefaultTransport
 	if *disableCertCheck {
@@ -212,7 +229,7 @@ func main() {
 		log.Fatalln("Invalid token URL: ", err)
 	}
 
-	err = identityProviderLogin(*listenPortFlag, authorizeUrl, tokenUrl, *scopeFlag, *clientIDFlag, *clientSecretFlag, client)
+	err = identityProviderLogin(*listenPortFlag, authorizeUrl, tokenUrl, *scopeFlag, *clientIDFlag, *clientSecretFlag, !*disablepkceFlag, client)
 
 	if err != nil {
 		log.Println(err)
