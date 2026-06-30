@@ -70,7 +70,7 @@ func getCodeAndState(l net.Listener) (string, string, error) {
 	var code string
 	var state string
 
-	handler.HandleFunc("GET /", func(rw http.ResponseWriter, req *http.Request) {
+	handler.HandleFunc("GET /callback", func(rw http.ResponseWriter, req *http.Request) {
 		values := req.URL.Query()
 		code = values.Get("code")
 		state = values.Get("state")
@@ -101,7 +101,7 @@ func identityProviderLogin(listenPort int, authorizationUrl, tokenUrl *url.URL, 
 		return err
 	}
 	defer l.Close()
-	redirectUri := fmt.Sprintf("http://localhost:%d", listenPort)
+	redirectUri := fmt.Sprintf("http://localhost:%d/callback", listenPort)
 
 	codeVerifier, codeChallenge, err := GenerateCodeVerifierAndChallenge()
 	if err != nil {

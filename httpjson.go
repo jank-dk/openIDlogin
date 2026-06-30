@@ -3,14 +3,18 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
+	"os"
 )
 
 func ReadJson[T any](resp *http.Response) (T, error) {
 	var result T
 	var err error
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		io.Copy(os.Stdout, resp.Body)
+		fmt.Println()
 		return result, fmt.Errorf("received status code %d", resp.StatusCode)
 	}
 
